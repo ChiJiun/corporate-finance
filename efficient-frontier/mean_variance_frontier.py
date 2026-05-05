@@ -21,7 +21,8 @@ ASSETS = {
 FX_TICKER = "TWD=X"  # Yahoo chart API: TWD per 1 USD.
 TRADING_DAYS = 252
 RISK_FREE_RATE = 0.0
-START_DATE = "2025-01-01"
+START_DATE = "2021-01-01"
+END_DATE = "2025-12-31"
 N_SIMULATIONS = 50_000
 RANDOM_SEED = 42
 N_FRONTIER_POINTS = 120
@@ -37,7 +38,8 @@ class Portfolio:
 
 def fetch_yahoo_chart(ticker: str, start: str, end: str | None, prefer_adjusted: bool) -> pd.Series:
     start_ts = int(pd.Timestamp(start, tz="UTC").timestamp())
-    end_ts = int((pd.Timestamp(end, tz="UTC") if end else pd.Timestamp.utcnow()).timestamp())
+    end_date = pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1) if end else pd.Timestamp.utcnow()
+    end_ts = int(end_date.timestamp())
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
     params = {
         "period1": start_ts,
@@ -189,6 +191,11 @@ def fetch_gold_usd(start: str, end: str | None) -> pd.Series:
         raise RuntimeError(
             "No daily gold data available for the requested period. "
             "Use a start date in 2025 or later, or provide another daily gold source."
+        )
+    if series.index.min() > pd.Timestamp(start) + pd.Timedelta(days=30):
+        raise RuntimeError(
+            "Fallback gold source does not cover the requested start date with daily data. "
+            "Yahoo chart data is required for this sample period."
         )
     return series
 
@@ -473,7 +480,7 @@ def main() -> None:
     output_dir = Path("outputs")
     output_dir.mkdir(exist_ok=True)
 
-    prices = fetch_prices(start=START_DATE, end=None)
+    prices = fetch_prices(start=START_DATE, end=END_DATE)
     daily_returns = prices.pct_change().dropna()
     mean_returns = daily_returns.mean() * TRADING_DAYS
     cov_matrix = daily_returns.cov() * TRADING_DAYS
