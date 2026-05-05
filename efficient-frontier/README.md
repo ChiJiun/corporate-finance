@@ -1,35 +1,113 @@
 # 三資產 Mean-Variance Efficient Frontier
 
-這個專案會抓取聯發科、第一金與黃金資料，將黃金美元報價用 USD/TWD 匯率換成台幣計價，再計算年化報酬、年化共變異數矩陣、蒙地卡羅投組與效率前緣。
+本分析建立聯發科、第一金與黃金的三資產均異效率前緣。黃金原始報價為美元，因此先用 USD/TWD 匯率轉成台幣計價，再和兩檔台股一起計算日報酬、共變異數矩陣、蒙地卡羅投組與最佳化配置。
 
-## 執行
+## 結論
 
-```powershell
-python mean_variance_frontier.py
-```
+若以風險調整後報酬作為主要判準，建議採用 Maximum Sharpe 配置：
 
-## 資產與資料來源
+| 資產 | 配置比例 |
+|---|---:|
+| 聯發科 | 41.24% |
+| 第一金 | 0.00% |
+| 黃金（台幣計價） | 58.76% |
 
-- 聯發科：`2454.TW`
-- 第一金：`2892.TW`
-- 黃金：`GC=F`
-- 匯率：`TWD=X`，Yahoo Finance 的 USD/TWD，也就是 1 美元兌台幣
+此配置的年化報酬為 `58.93%`，年化波動為 `25.61%`，Sharpe ratio 為 `2.301`。在本樣本期間中，聯發科提供最高年化報酬，黃金提供不錯的報酬且與聯發科相關性很低，因此 Maximum Sharpe 配置會集中在聯發科與黃金。
 
-黃金台幣價格的計算方式：
+## 三種最佳化結果
+
+| 投組 | 年化報酬 | 年化波動 | Sharpe | 聯發科 | 第一金 | 黃金 |
+|---|---:|---:|---:|---:|---:|---:|
+| 最大報酬 | 80.52% | 45.41% | 1.773 | 100.00% | 0.00% | 0.00% |
+| 最大 Sharpe | 58.93% | 25.61% | 2.301 | 41.24% | 0.00% | 58.76% |
+| 最小變異 | 22.16% | 16.61% | 1.334 | 5.71% | 68.93% | 25.36% |
+
+解讀：
+
+- 最大報酬投組全部配置到聯發科，因為聯發科在樣本期間的年化平均報酬最高。
+- 最大 Sharpe 投組避開第一金，主因是第一金報酬較低，放入後沒有提升風險調整後績效。
+- 最小變異投組以第一金為主，搭配黃金與少量聯發科，用來降低整體波動。
+
+## 資產表現
+
+| 資產 | 年化平均報酬 |
+|---|---:|
+| 聯發科 | 80.52% |
+| 第一金 | 9.37% |
+| 黃金（台幣計價） | 43.78% |
+
+## 相關係數
+
+|  | 聯發科 | 第一金 | 黃金 |
+|---|---:|---:|---:|
+| 聯發科 | 1.000 | 0.239 | 0.062 |
+| 第一金 | 0.239 | 1.000 | 0.212 |
+| 黃金 | 0.062 | 0.212 | 1.000 |
+
+黃金與聯發科的相關係數只有 `0.062`，代表兩者在樣本期間的日報酬連動性很低。這也是黃金在 Maximum Sharpe 投組中占比高的原因之一：它能在保留報酬的同時提供分散效果。
+
+## 視覺化重點
+
+- `outputs/efficient_frontier.png`：主要結果圖。散點是 50,000 組蒙地卡羅投組，紅線是最佳化效率前緣，並標示最大報酬、最大 Sharpe、最小變異三個投組。
+- `outputs/optimized_weights.png`：三種最佳化投組的配置比例，可直接用在報告。
+- `outputs/correlation_heatmap.png`：三資產日報酬相關係數熱圖，可用來說明分散效果。
+- `outputs/normalized_prices_twd.png`：三資產以台幣計價後的標準化價格走勢。
+- `outputs/daily_return_distribution.png`：三資產日報酬分配，可比較日波動型態。
+
+## 模型設定
+
+- 樣本期間：`2025-01-01` 起，到資料來源可取得的最新交易日
+- 年化交易日：`252`
+- 無風險利率：`0%`
+- 蒙地卡羅模擬次數：`50,000`
+- 隨機種子：`42`
+- 效率前緣目標報酬點數：`120`
+- 權重限制：每項資產介於 `0%` 到 `100%`
+- 投組限制：權重加總等於 `100%`
+- 放空限制：不允許放空
+
+## 資料來源與計價
+
+| 資產 | 代號 | 計價處理 |
+|---|---|---|
+| 聯發科 | `2454.TW` | 台幣，使用調整後收盤價 |
+| 第一金 | `2892.TW` | 台幣，使用調整後收盤價 |
+| 黃金 | `GC=F` | 美元報價，轉成台幣 |
+| 匯率 | `TWD=X` | USD/TWD，也就是 1 美元兌台幣 |
+
+黃金台幣價格：
 
 ```text
 Gold (TWD) = GC=F close price in USD * USD/TWD
 ```
 
-## 輸出
+主資料來源為 Yahoo chart API。程式也保留公開資料備援：台股使用 TWSE，匯率使用中央銀行統計資料庫，黃金使用 FreeGoldAPI。
 
-執行後會產生 `outputs/`：
+## 執行方式
 
-- `prices_twd.csv`：三資產台幣基礎價格
-- `daily_returns.csv`：日報酬率
-- `annualized_covariance_matrix.csv`：年化共變異數矩陣
-- `monte_carlo_portfolios.csv`：50,000 組隨機權重模擬
-- `efficient_frontier.csv`：最佳化求出的效率前緣
-- `normalized_prices_twd.png`：標準化價格走勢
-- `efficient_frontier.png`：蒙地卡羅散點與效率前緣圖
+在 `efficient-frontier` 資料夾執行：
+
+```powershell
+python mean_variance_frontier.py
+```
+
+執行後會產生或更新 `outputs/` 內的資料與圖檔。
+
+## 輸出檔案
+
+| 檔案 | 說明 |
+|---|---|
+| `prices_twd.csv` | 三資產台幣基礎價格 |
+| `daily_returns.csv` | 三資產日報酬率 |
+| `annualized_mean_returns.csv` | 年化平均報酬 |
+| `annualized_covariance_matrix.csv` | 年化共變異數矩陣 |
+| `correlation_matrix.csv` | 日報酬相關係數矩陣 |
+| `monte_carlo_portfolios.csv` | 50,000 組隨機權重模擬結果 |
+| `efficient_frontier.csv` | 最佳化求出的效率前緣 |
+| `optimized_portfolios.csv` | 最大報酬、最大 Sharpe、最小變異配置比例 |
+| `normalized_prices_twd.png` | 標準化價格走勢圖 |
+| `efficient_frontier.png` | 蒙地卡羅散點與效率前緣圖 |
+| `correlation_heatmap.png` | 報酬相關係數熱圖 |
+| `optimized_weights.png` | 最佳化投組權重圖 |
+| `daily_return_distribution.png` | 日報酬分配圖 |
 

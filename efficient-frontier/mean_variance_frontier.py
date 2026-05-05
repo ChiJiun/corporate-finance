@@ -22,6 +22,9 @@ FX_TICKER = "TWD=X"  # Yahoo chart API: TWD per 1 USD.
 TRADING_DAYS = 252
 RISK_FREE_RATE = 0.0
 START_DATE = "2025-01-01"
+N_SIMULATIONS = 50_000
+RANDOM_SEED = 42
+N_FRONTIER_POINTS = 120
 
 
 @dataclass(frozen=True)
@@ -386,6 +389,77 @@ def plot_prices(prices: pd.DataFrame, output_path: Path) -> None:
     plt.close(fig)
 
 
+def plot_correlation_heatmap(correlation_matrix: pd.DataFrame, output_path: Path) -> None:
+    fig, ax = plt.subplots(figsize=(7, 6))
+    image = ax.imshow(correlation_matrix, cmap="RdBu_r", vmin=-1, vmax=1)
+    ax.set_title("Return Correlation Matrix")
+    ax.set_xticks(range(len(correlation_matrix.columns)), correlation_matrix.columns, rotation=25, ha="right")
+    ax.set_yticks(range(len(correlation_matrix.index)), correlation_matrix.index)
+
+    for row in range(len(correlation_matrix.index)):
+        for col in range(len(correlation_matrix.columns)):
+            value = correlation_matrix.iloc[row, col]
+            ax.text(col, row, f"{value:.2f}", ha="center", va="center", color="black")
+
+    cbar = fig.colorbar(image, ax=ax)
+    cbar.set_label("Correlation")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+
+def portfolio_table(points: dict[str, Portfolio], asset_names: list[str]) -> pd.DataFrame:
+    rows = []
+    for label, portfolio in points.items():
+        row = {
+            "portfolio": label,
+            "annual_return": portfolio.annual_return,
+            "annual_volatility": portfolio.annual_volatility,
+            "sharpe": portfolio.sharpe,
+        }
+        for asset_name, weight in zip(asset_names, portfolio.weights, strict=True):
+            row[f"w_{asset_name}"] = weight
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def plot_portfolio_weights(portfolios: pd.DataFrame, asset_names: list[str], output_path: Path) -> None:
+    weight_columns = [f"w_{name}" for name in asset_names]
+    plot_data = portfolios.set_index("portfolio")[weight_columns]
+    plot_data.columns = asset_names
+
+    ax = plot_data.plot(kind="bar", stacked=True, figsize=(10, 6), width=0.65)
+    ax.set_title("Optimized Portfolio Weights")
+    ax.set_xlabel("")
+    ax.set_ylabel("Portfolio weight")
+    ax.yaxis.set_major_formatter(lambda y, _: f"{y:.0%}")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.08), ncol=len(asset_names))
+    ax.grid(axis="y", alpha=0.25)
+    for container in ax.containers:
+        ax.bar_label(
+            container,
+            labels=[f"{value:.0%}" if value >= 0.04 else "" for value in container.datavalues],
+            label_type="center",
+            fontsize=9,
+        )
+    fig = ax.get_figure()
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+
+def plot_return_distribution(daily_returns: pd.DataFrame, output_path: Path) -> None:
+    ax = daily_returns.plot(kind="hist", bins=45, alpha=0.5, figsize=(10, 6))
+    ax.set_title("Daily Return Distribution")
+    ax.set_xlabel("Daily return")
+    ax.xaxis.set_major_formatter(lambda x, _: f"{x:.0%}")
+    ax.grid(axis="y", alpha=0.25)
+    fig = ax.get_figure()
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+
 def print_portfolio(label: str, portfolio: Portfolio, asset_names: list[str]) -> None:
     print(f"\n{label}")
     print(f"  Annual return:     {portfolio.annual_return:8.2%}")
@@ -404,11 +478,16 @@ def main() -> None:
     mean_returns = daily_returns.mean() * TRADING_DAYS
     cov_matrix = daily_returns.cov() * TRADING_DAYS
 
-    simulated = monte_carlo_portfolios(mean_returns, cov_matrix, n_simulations=50_000, seed=42)
+    simulated = monte_carlo_portfolios(
+        mean_returns,
+        cov_matrix,
+        n_simulations=N_SIMULATIONS,
+        seed=RANDOM_SEED,
+    )
 
     min_return = float(mean_returns.min())
     max_return = float(mean_returns.max())
-    target_returns = np.linspace(min_return, max_return, 120)
+    target_returns = np.linspace(min_return, max_return, N_FRONTIER_POINTS)
     frontier_portfolios = [
         minimize_volatility_for_return(target, mean_returns, cov_matrix)
         for target in target_returns
@@ -428,14 +507,23 @@ def main() -> None:
         "Maximum Sharpe": maximize_sharpe(mean_returns, cov_matrix),
         "Minimum variance": minimum_variance(mean_returns, cov_matrix),
     }
+    asset_names = list(mean_returns.index)
+    optimized_portfolios = portfolio_table(points, asset_names)
+    correlation_matrix = daily_returns.corr()
 
     prices.to_csv(output_dir / "prices_twd.csv")
     daily_returns.to_csv(output_dir / "daily_returns.csv")
+    mean_returns.to_csv(output_dir / "annualized_mean_returns.csv", header=["annual_return"])
     cov_matrix.to_csv(output_dir / "annualized_covariance_matrix.csv")
+    correlation_matrix.to_csv(output_dir / "correlation_matrix.csv")
     simulated.to_csv(output_dir / "monte_carlo_portfolios.csv", index=False)
     frontier.to_csv(output_dir / "efficient_frontier.csv", index=False)
+    optimized_portfolios.to_csv(output_dir / "optimized_portfolios.csv", index=False)
     plot_prices(prices, output_dir / "normalized_prices_twd.png")
     plot_frontier(simulated, frontier, points, output_dir / "efficient_frontier.png")
+    plot_correlation_heatmap(correlation_matrix, output_dir / "correlation_heatmap.png")
+    plot_portfolio_weights(optimized_portfolios, asset_names, output_dir / "optimized_weights.png")
+    plot_return_distribution(daily_returns, output_dir / "daily_return_distribution.png")
 
     print(f"Price sample: {prices.index.min().date()} to {prices.index.max().date()}")
     print("\nAnnualized mean returns")
@@ -443,7 +531,6 @@ def main() -> None:
     print("\nAnnualized covariance matrix")
     print(cov_matrix.to_string(float_format=lambda x: f"{x: .6f}"))
 
-    asset_names = list(mean_returns.index)
     for label, portfolio in points.items():
         print_portfolio(label, portfolio, asset_names)
 
